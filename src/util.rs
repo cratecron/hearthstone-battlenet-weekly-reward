@@ -48,4 +48,8 @@ pub fn create_partial_browser_config(profile_dir: &Path) -> BrowserConfigBuilder
         .arg(format!("--user-data-dir={}", profile_dir.display()))
         .arg("--no-first-run")
         .arg("--no-default-browser-check")
+        .arg("--disable-background-timer-throttling")
+        .arg("--disable-backgrounding-occluded-windows")
+        .arg("--disable-renderer-backgrounding")
+        .arg("--force-color-profile=srgb")
 }

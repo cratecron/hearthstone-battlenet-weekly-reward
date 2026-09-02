@@ -14,68 +14,60 @@ use tokio_stream::StreamExt;
 async fn main() -> Result<(), Box<dyn Error>> {
     let started = Instant::now();
 
-    //create profile directory if it doesn't exist
     println!("Initializing profile directory...");
     let profile_dir = get_module_data_dir()?;
     fs::create_dir_all(&profile_dir)?;
 
-    //configure browser
+    //configure headless browser
     let config = create_partial_browser_config(&profile_dir).build()?;
 
-    //launch browser
     println!("Initialized. Launching browser...");
     let (mut browser, mut handler) = Browser::launch(config).await?;
 
     //keep connection to browser open
     tokio::spawn(async move { while let Some(_event) = handler.next().await {} });
 
-    //open hearthstone store page
-    println!("Launched. Opening Hearthstone store page...");
+    println!("Launched. Opening Battle.net login page...");
     let page = browser
-        .new_page("https://us.shop.battle.net/en-us/family/hearthstone/")
+        .new_page("https://us.shop.battle.net/login?ref=https%3A%2F%2Fus.shop.battle.net%2Fen-us%2Ffamily%2Fhearthstone%23optLogin%3Dtrue")
         .await?;
 
-    //choose flow based on authentication state
     println!("Opened. Checking authentication state...");
     let authed = check_auth(&page).await?;
     if authed {
         println!("--> Authenticated! Executing HEADLESS reward claim...");
         run_reward_claim(page).await?;
+
+        println!("Closing browser...");
+        browser.close().await?;
     } else {
         println!("--> Unauthenticated. Executing HEADFUL manual login flow...");
+        println!("Closing headless browser to open headful browser...");
+        browser.close().await?;
         run_unauthenticated_flow(&profile_dir).await?;
     }
 
-    //close browser
-    println!("Closing browser...");
-    browser.close().await?;
-
-    println!(
-        "Task completed. Total time: {} ms",
-        started.elapsed().as_millis()
-    );
+    println!("Task completed. Total time: {} ms", started.elapsed().as_millis());
 
     Ok(())
 }
 
 async fn check_auth(page: &Page) -> Result<bool, Box<dyn Error>> {
     //wait for what we need to mount
-    wait_for_selector(page, "blz-nav-battlenet", 15000).await?;
+    if wait_for_selector(page, "blz-nav-battlenet", 7000).await.is_err() {
+        return Ok(false);
+    }
+    wait_for_selector(page, "blz-nav-battlenet[authenticated]", 7000).await.ok();
 
     //verify if user is logged in by checking for absence of "Account" placeholder text
-    let authed: bool = page
-        .evaluate(r#"!!document.querySelector("blz-nav-battlenet[authenticated]")"#)
-        .await?
-        .into_value()?;
+    let authed: bool = page.evaluate(r#"!!document.querySelector("blz-nav-battlenet[authenticated]")"#).await?.into_value()?;
 
     Ok(authed)
 }
 
 async fn run_unauthenticated_flow(profile_dir: &Path) -> Result<(), Box<dyn Error>> {
     //configure browser
-    let config = create_partial_browser_config(profile_dir)
-        .with_head()
-        .build()?;
+    let config = create_partial_browser_config(profile_dir).with_head().build()?;
 
     //launch browser
     println!("Launching browser...");
@@ -103,20 +95,22 @@ async fn run_unauthenticated_flow(profile_dir: &Path) -> Result<(), Box<dyn Erro
             .url()
             .await?
             .ok_or("Could not find page url during ")?
-            .contains("https://us.shop.battle.net/en-us/family/hearthstone")
+            .starts_with("https://us.shop.battle.net/en-us/family/hearthstone")
         {
-            let authed = check_auth(&page).await?;
-
-            //if logged in, run reward claim
-            if authed {
-                println!("Authenticated. Executing HEADLESS reward claim...");
-                run_reward_claim(page).await?;
-                browser.close().await?;
-                return Ok(());
-            }
+            break;
         }
 
         sleep(Duration::from_secs(1)).await;
+    }
+
+    let authed = check_auth(&page).await?;
+
+    //if logged in, run reward claim
+    if authed {
+        println!("Authenticated. Executing HEADLESS reward claim...");
+        run_reward_claim(page).await?;
+        browser.close().await?;
+        return Ok(());
     }
 
     //timeout and close
@@ -126,15 +120,14 @@ async fn run_unauthenticated_flow(profile_dir: &Path) -> Result<(), Box<dyn Erro
 
 async fn run_reward_claim(page: Page) -> Result<(), Box<dyn Error>> {
     println!("Waiting for reward claim button to be available...");
-    page.find_element("a[aria-label=\"Shop, Hearthstone®: Battle.net® Shop: Weekly Reward\"] a[aria-label=\"Claim Free\"]").await?.click().await?;
+    let claim_selector = "a[aria-label=\"Shop, Hearthstone®: Battle.net® Shop: Weekly Reward\"] a[aria-label=\"Claim Free\"]";
+    wait_for_selector(&page, claim_selector, 7000).await?;
 
-    match wait_for_selector(
-        &page,
-        "a[aria-label=\"Shop, Hearthstone®: Battle.net® Shop: Weekly Reward\"] button[disabled]",
-        10000,
-    )
-    .await
-    {
+    //click the claim button
+    page.find_element(claim_selector).await?.click().await?;
+
+    //check to see if the button is now disabled, indicating the reward has been claimed
+    match wait_for_selector(&page, "a[aria-label=\"Shop, Hearthstone®: Battle.net® Shop: Weekly Reward\"] button[disabled]", 7000).await {
         Ok(_) => println!("Reward claimed successfully."),
         Err(e) => {
             println!("Failed to confirm reward claim: {}", e);
