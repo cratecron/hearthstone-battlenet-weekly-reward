@@ -36,13 +36,5 @@ pub fn create_partial_browser_config(profile_dir: &Path) -> BrowserConfigBuilder
         .window_size(1920, 1080)
         .user_data_dir(profile_dir)
         .arg("--no-first-run")
-        .arg("--disk-cache-size=1")
         .arg("--no-default-browser-check")
-        .arg("--disable-background-timer-throttling")
-        .arg("--disable-backgrounding-occluded-windows")
-        .arg("--disable-renderer-backgrounding")
-        .arg("--force-color-profile=srgb")
-        .arg("--profile-directory=Default")
-        .arg("--disable-features=IsolateOrigins,site-per-process")
-        .arg("--restore-last-session")
 }

@@ -26,7 +26,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     fs::create_dir_all(&profile_dir)?;
 
     //configure headless browser
-    let config = create_partial_browser_config(&profile_dir).build()?;
+    let config = create_partial_browser_config(&profile_dir).with_head().build()?;
 
     info!("Initialized. Launching browser...");
     let (mut browser, mut handler) = Browser::launch(config).await?;
@@ -45,10 +45,14 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
         info!("Closing browser...");
         browser.close().await?;
+        browser.wait().await?;
     } else {
         info!("--> Unauthenticated. Executing HEADFUL manual login flow...");
         info!("Closing headless browser to open headful browser...");
+
         browser.close().await?;
+        browser.wait().await?;
+
         run_unauthenticated_flow(&profile_dir).await?;
     }
 
@@ -112,22 +116,28 @@ async fn run_unauthenticated_flow(profile_dir: &Path) -> Result<(), Box<dyn Erro
 
     //if logged in, run reward claim
     if authed {
-        info!("--> Authenticated. Executing HEADLESS reward claim...");
+        info!("--> Authenticated. Executing HEADFUL reward claim...");
         run_reward_claim(page).await?;
+        info!("Closing browser...");
         browser.close().await?;
+        browser.wait().await?;
         return Ok(());
     }
 
     //timeout and close
     warn!("Login timed out after 5 minutes.");
     browser.close().await?;
+    browser.wait().await?;
     Err("Login timed out after 5 minutes.".into())
 }
 
 async fn run_reward_claim(page: Page) -> Result<(), Box<dyn Error>> {
     info!("Waiting for reward claim button to be available...");
     let claim_selector = "a[aria-label=\"Shop, Hearthstone®: Battle.net® Shop: Weekly Reward\"] a[aria-label=\"Claim Free\"]";
-    wait_for_selector(&page, claim_selector, 7000).await?;
+    if wait_for_selector(&page, claim_selector, 7000).await.is_err() {
+        warn!("Reward claim button not found. Could have been already claimed or not available.");
+        return Ok(());
+    }
 
     //click the claim button
     info!(selector = %claim_selector, "Clicking reward claim button...");
